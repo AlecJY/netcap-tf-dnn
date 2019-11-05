@@ -15,15 +15,9 @@
 #################################################################################################################################################################
 
 import pandas as pd
-import io
-import requests
 import os
-import tensorflow.contrib.learn as skflow
 import numpy as np
-import matplotlib.pyplot as plt
 import argparse
-import shutil
-import base64
 import time
 import sys
 
@@ -31,7 +25,6 @@ from termcolor import colored
 from sklearn.model_selection import train_test_split
 from sklearn import metrics
 from sklearn import preprocessing
-from scipy.stats import zscore
 
 ENCODING = 'utf-8'
 
@@ -107,13 +100,21 @@ def encode_numeric_zscore(df, name, mean=None, sd=None):
 
     df[name] = (df[name] - mean) / sd
 
+ignored_column = []
+
+def ignore_column(df, name):
+    ignored_column.append(name)
+
+def is_ignored(name):
+    return name in ignored_column
+
 def to_xy(df, target):
     """
     Converts a pandas dataframe to the x,y inputs that TensorFlow needs.
     """
     result = []
     for x in df.columns:
-        if x != target:
+        if x != target and not is_ignored(x):
             result.append(x)
     # find out the type of the target column.  Is it really this hard? :(
     target_type = df[target].dtypes
@@ -122,13 +123,9 @@ def to_xy(df, target):
     if target_type in (np.int64, np.int32):
         # Classification
         dummies = pd.get_dummies(df[target])
-        # as_matrix is deprecated
-        #return df.as_matrix(result).astype(np.float32), dummies.as_matrix().astype(np.float32)
         return df[result].values.astype(np.float32), dummies.values.astype(np.float32)
     else:
         # Regression
-        # as_matrix is deprecated
-        #return df.as_matrix(result).astype(np.float32), df.as_matrix([target]).astype(np.float32)
         return df[result].values.astype(np.float32), df[target].values.astype(np.float32)
 
 ## TODO: add flags for these
@@ -163,31 +160,6 @@ def hms_string(sec_elapsed):
         return "{}m {:2.0f}s".format(m, s)
     else:
         return "{}h {}m {:2.0f}s".format(h, m, s)
-
-# # Regression chart.
-# def chart_regression(pred,y,sort=True):
-#     t = pd.DataFrame({'pred' : pred, 'y' : y.flatten()})
-#     if sort:
-#         t.sort_values(by=['y'],inplace=True)
-#     a = plt.plot(t['y'].tolist(),label='expected')
-#     b = plt.plot(t['pred'].tolist(),label='prediction')
-#     plt.ylabel('output')
-#     plt.legend()
-#     plt.show()
-
-# # Remove all rows where the specified column is +/- sd standard deviations
-# def remove_outliers(df, name, sd):
-#     drop_rows = df.index[(np.abs(df[name] - df[name].mean()) >= (sd * df[name].std()))]
-#     df.drop(drop_rows, axis=0, inplace=True)
-
-
-# # Encode a column to a range between normalized_low and normalized_high.
-# def encode_numeric_range(df, name, normalized_low=-1, normalized_high=1,data_low=None, data_high=None):
-#     if data_low is None:
-#         data_low = min(df[name])
-#         data_high = max(df[name])
-
-#     df[name] = ((df[name] - data_low) / (data_high - data_low)) * (normalized_high - normalized_low) + normalized_low
 
 def drop_col(name, df):
     """
@@ -268,6 +240,7 @@ df = pd.read_csv(
     delimiter=',', 
     engine='c', 
     encoding="utf-8-sig",
+    skipinitialspace=True,
 )
 
 print(colored("Read {} rows.".format(len(df)), "yellow"))
@@ -363,6 +336,7 @@ encoders = {
     'UID'              : encode_string,
     'Duration'         : encode_numeric_zscore,
     'TimestampLast'    : encode_numeric_zscore,
+    'TotalSize': encode_numeric_zscore,
     
     # UDP specific fields
     'Length'           : encode_numeric_zscore,
@@ -388,6 +362,9 @@ encoders = {
     'Urgent'           : encode_numeric_zscore,
     'Padding'          : encode_numeric_zscore,
     'Options'          : encode_string,
+
+    # TCP and UDP specific fields
+    'Payload'          : encode_string,
     
     # ARP
     'AddrType'          : encode_numeric_zscore,
@@ -492,15 +469,98 @@ encoders = {
     'SupportedPoints'    : encode_string, # string 
     'ALPNs'              : encode_string, # string
     'Ja3'                : encode_string, # string
+
+    # CIC IDS 2017 Machine Learning CSV
+    'Destination Port' : encode_numeric_zscore,
+    'Flow Duration' : encode_numeric_zscore,
+    'Total Fwd Packets' : encode_numeric_zscore,
+    'Total Backward Packets' : encode_numeric_zscore,
+    'Total Length of Fwd Packets' : encode_numeric_zscore,
+    'Total Length of Bwd Packets' : encode_numeric_zscore,
+    'Fwd Packet Length Max' : encode_numeric_zscore,
+    'Fwd Packet Length Min' : encode_numeric_zscore,
+    'Fwd Packet Length Mean' : encode_numeric_zscore,
+    'Fwd Packet Length Std' : encode_numeric_zscore,
+    'Bwd Packet Length Max' : encode_numeric_zscore,
+    'Bwd Packet Length Min' : encode_numeric_zscore,
+    'Bwd Packet Length Mean' : encode_numeric_zscore,
+    'Bwd Packet Length Std' : encode_numeric_zscore,
+    'Flow Bytes/s' : ignore_column,
+    'Flow Packets/s' : ignore_column,
+    'Flow IAT Mean' : encode_numeric_zscore,
+    'Flow IAT Std' : encode_numeric_zscore,
+    'Flow IAT Max' : encode_numeric_zscore,
+    'Flow IAT Min' : encode_numeric_zscore,
+    'Fwd IAT Total' : encode_numeric_zscore,
+    'Fwd IAT Mean' : encode_numeric_zscore,
+    'Fwd IAT Std' : encode_numeric_zscore,
+    'Fwd IAT Max' : encode_numeric_zscore,
+    'Fwd IAT Min' : encode_numeric_zscore,
+    'Bwd IAT Total' : encode_numeric_zscore,
+    'Bwd IAT Mean' : encode_numeric_zscore,
+    'Bwd IAT Std' : encode_numeric_zscore,
+    'Bwd IAT Max' : encode_numeric_zscore,
+    'Bwd IAT Min' : encode_numeric_zscore,
+    'Fwd PSH Flags' : encode_numeric_zscore,
+    'Bwd PSH Flags' : encode_numeric_zscore,
+    'Fwd URG Flags' : encode_numeric_zscore,
+    'Bwd URG Flags' : encode_numeric_zscore,
+    'Fwd Header Length' : encode_numeric_zscore,
+    'Bwd Header Length' : encode_numeric_zscore,
+    'Fwd Packets/s' : encode_numeric_zscore,
+    'Bwd Packets/s' : encode_numeric_zscore,
+    'Min Packet Length' : encode_numeric_zscore,
+    'Max Packet Length' : encode_numeric_zscore,
+    'Packet Length Mean' : encode_numeric_zscore,
+    'Packet Length Std' : encode_numeric_zscore,
+    'Packet Length Variance' : encode_numeric_zscore,
+    'FIN Flag Count' : encode_numeric_zscore,
+    'SYN Flag Count' : encode_numeric_zscore,
+    'RST Flag Count' : encode_numeric_zscore,
+    'PSH Flag Count' : encode_numeric_zscore,
+    'ACK Flag Count' : encode_numeric_zscore,
+    'URG Flag Count' : encode_numeric_zscore,
+    'CWE Flag Count' : encode_numeric_zscore,
+    'ECE Flag Count' : encode_numeric_zscore,
+    'Down/Up Ratio' : encode_numeric_zscore,
+    'Average Packet Size' : encode_numeric_zscore,
+    'Avg Fwd Segment Size' : encode_numeric_zscore,
+    'Avg Bwd Segment Size' : encode_numeric_zscore,
+    'Fwd Header Length.1' : encode_numeric_zscore,
+    'Fwd Avg Bytes/Bulk' : encode_numeric_zscore,
+    'Fwd Avg Packets/Bulk' : encode_numeric_zscore,
+    'Fwd Avg Bulk Rate' : encode_numeric_zscore,
+    'Bwd Avg Bytes/Bulk' : encode_numeric_zscore,
+    'Bwd Avg Packets/Bulk' : encode_numeric_zscore,
+    'Bwd Avg Bulk Rate' : encode_numeric_zscore,
+    'Subflow Fwd Packets' : encode_numeric_zscore,
+    'Subflow Fwd Bytes' : encode_numeric_zscore,
+    'Subflow Bwd Packets' : encode_numeric_zscore,
+    'Subflow Bwd Bytes' : encode_numeric_zscore,
+    'Init_Win_bytes_forward' : encode_numeric_zscore,
+    'Init_Win_bytes_backward' : encode_numeric_zscore,
+    'act_data_pkt_fwd' : encode_numeric_zscore,
+    'min_seg_size_forward' : encode_numeric_zscore,
+    'Active Mean' : encode_numeric_zscore,
+    'Active Std' : encode_numeric_zscore,
+    'Active Max' : encode_numeric_zscore,
+    'Active Min' : encode_numeric_zscore,
+    'Idle Mean' : encode_numeric_zscore,
+    'Idle Std' : encode_numeric_zscore,
+    'Idle Max' : encode_numeric_zscore,
+    'Idle Min' : encode_numeric_zscore,
 }
 
 # Encode all values by looking up each column name and picking the configured encoding method
 for col in df.columns:
-    if col != 'result':
+    if col != 'result' and col != 'Label':
         encoders[col](df, col)
  
 # Encode result as text index
-outcomes = encode_text_index(df, 'result')
+if 'result' in df.columns:
+    outcomes = encode_text_index(df, 'result')
+else:
+    outcomes = encode_text_index(df, 'Label')
 
 # Print number of classes
 num_classes = len(outcomes)
@@ -519,13 +579,16 @@ df.dropna(inplace=True,axis=1)
 ##
 
 from keras.models import Sequential
-from keras.layers.core import Dense, Activation
+from keras.layers.core import Dense
 from keras.callbacks import EarlyStopping
 
 print("[INFO] breaking into predictors and prediction...")
 
 # Break into X (predictors) & y (prediction)
-x, y = to_xy(df,'result')
+if 'result' in df.columns:
+    x, y = to_xy(df,'result')
+else:
+    x, y = to_xy(df, 'Label')
 
 print("[INFO] creating train/test split")
 
@@ -550,13 +613,13 @@ model.add(Dense(y.shape[1],activation='softmax'))
 
 # compile model
 # 
-model.compile(loss=arguments.loss, optimizer=arguments.optimizer)
+model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'])
 
 # create monitor for callback
 monitor = EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=5, verbose=1, mode='auto')
 
 print("[INFO] fitting model...")
-model.fit(x_train,y_train,validation_data=(x_test,y_test),callbacks=[monitor],verbose=2,epochs=1000)
+model.fit(x_train,y_train,validation_data=(x_test,y_test),callbacks=[monitor],verbose=1,epochs=1000)
 
 print("[INFO] measuring accuracy...")
 pred = model.predict(x_test)
