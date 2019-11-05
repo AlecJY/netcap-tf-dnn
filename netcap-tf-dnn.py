@@ -100,21 +100,13 @@ def encode_numeric_zscore(df, name, mean=None, sd=None):
 
     df[name] = (df[name] - mean) / sd
 
-ignored_column = []
-
-def ignore_column(df, name):
-    ignored_column.append(name)
-
-def is_ignored(name):
-    return name in ignored_column
-
 def to_xy(df, target):
     """
     Converts a pandas dataframe to the x,y inputs that TensorFlow needs.
     """
     result = []
     for x in df.columns:
-        if x != target and not is_ignored(x):
+        if x != target:
             result.append(x)
     # find out the type of the target column.  Is it really this hard? :(
     target_type = df[target].dtypes
@@ -212,6 +204,7 @@ parser.add_argument('-dropna', default=False, action='store_true', help='drop ro
 parser.add_argument('-string_dummy', default=False, action='store_true', help='encode strings as dummy variables')
 parser.add_argument('-string_index', default=True, action='store_true', help='encode strings as indices (default)')
 parser.add_argument('-test_size', type=float, default=0.25, help='specify size of the test data in percent (default: 0.25)')
+parser.add_argument('-val_size', type=float, default=0.4, help='specify size of the validation data when training in test data in percent (default: 0.4)')
 parser.add_argument('-loss', type=str, default='categorical_crossentropy', help='set function (default: categorical_crossentropy)')
 parser.add_argument('-optimizer', type=str, default='adam', help='set optimizer (default: adam)')
 
@@ -258,6 +251,10 @@ if arguments.sample != None:
 # Always drop columns that are unique for every record
 drop_col('UID', df)
 drop_col('SessionID', df)
+
+# Drop columns which have abnormal vaules
+drop_col('Flow Bytes/s', df)
+drop_col('Flow Packets/s', df)
 
 # Drop additionally specified columns from the dataset
 if arguments.drop != None:
@@ -485,8 +482,6 @@ encoders = {
     'Bwd Packet Length Min' : encode_numeric_zscore,
     'Bwd Packet Length Mean' : encode_numeric_zscore,
     'Bwd Packet Length Std' : encode_numeric_zscore,
-    'Flow Bytes/s' : ignore_column,
-    'Flow Packets/s' : ignore_column,
     'Flow IAT Mean' : encode_numeric_zscore,
     'Flow IAT Std' : encode_numeric_zscore,
     'Flow IAT Max' : encode_numeric_zscore,
@@ -596,6 +591,7 @@ print("[INFO] creating train/test split")
 # by default, 25% of data is used for testing
 # it can be configured using the test_size commandline flag
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=arguments.test_size, random_state=42)
+x_val, x_test, y_val, y_test = train_test_split(x_test, y_test, test_size=arguments.val_size, random_state=42)
 
 print("[INFO] creating neural network...")
 
@@ -619,7 +615,7 @@ model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accu
 monitor = EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=5, verbose=1, mode='auto')
 
 print("[INFO] fitting model...")
-model.fit(x_train,y_train,validation_data=(x_test,y_test),callbacks=[monitor],verbose=1,epochs=1000)
+model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[monitor],verbose=1,epochs=1000)
 
 print("[INFO] measuring accuracy...")
 pred = model.predict(x_test)
