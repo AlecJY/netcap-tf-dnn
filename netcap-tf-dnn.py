@@ -21,6 +21,7 @@ import argparse
 import time
 import sys
 
+from datetime import datetime
 from termcolor import colored
 from sklearn.model_selection import train_test_split
 from sklearn import metrics
@@ -575,7 +576,7 @@ df.dropna(inplace=True,axis=1)
 
 from keras.models import Sequential
 from keras.layers.core import Dense
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, TensorBoard
 
 print("[INFO] breaking into predictors and prediction...")
 
@@ -608,14 +609,17 @@ model.add(Dense(1, kernel_initializer='normal'))
 model.add(Dense(y.shape[1],activation='softmax'))
 
 # compile model
-# 
+#
 model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'])
 
 # create monitor for callback
 monitor = EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=5, verbose=1, mode='auto')
 
+logdir="logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
+tensorboard_callback = TensorBoard(log_dir=logdir, histogram_freq=1, profile_batch = 3)
+
 print("[INFO] fitting model...")
-model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[monitor],verbose=1,epochs=1000)
+model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[monitor, tensorboard_callback],verbose=1,epochs=1000)
 
 print("[INFO] measuring accuracy...")
 pred = model.predict(x_test)

@@ -1,4 +1,5 @@
 .idea/
+logs/
 venv/
 __pycache__/
 *.py[cod]
