@@ -574,9 +574,83 @@ df.dropna(inplace=True,axis=1)
 ## Afterwards, the Neural Network is trained and classification accuracy validated.
 ##
 
+import tensorflow as tf
+from tensorflow.python.client import timeline
+
 from keras.models import Sequential
 from keras.layers.core import Dense
-from keras.callbacks import EarlyStopping, TensorBoard
+from keras.callbacks import EarlyStopping, Callback
+
+
+class TimeHistory(Callback):
+    def on_train_begin(self, logs={}):
+        self.times = []
+
+    def on_epoch_begin(self, batch, logs={}):
+        self.epoch_time_start = time.time()
+
+    def on_epoch_end(self, batch, logs={}):
+        self.times.append(time.time() - self.epoch_time_start)
+
+
+def get_average_layer_train_time(epochs, model, x_train, y_train, x_val, y_val):
+    time_callback = TimeHistory()
+
+    # loop through each layer setting it Trainable and others as non trainable
+    results = []
+    for i in range(len(model.layers)):
+        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
+
+        layer_name = model.layers[i].name    # storing name of layer for printing layer
+
+        # setting all layers as non-trainable
+        for layer in model.layers:
+            layer.trainable = False
+
+        # setting ith layers as trainable
+        model.layers[i].trainable = True
+
+        # compile
+        model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'], options=run_options, run_metadata=run_metadata)
+
+        # fit on a small number of epochs with callback that records time for each epoch
+        model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[time_callback],verbose=1,epochs=epochs)
+
+        results.append(np.average(time_callback.times))
+        # print average of the time for each layer
+        print(f"{layer_name}: Approx (avg) train time for {epochs} epochs = ", np.average(time_callback.times))
+
+        trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+        with open('timeline-gpu.%d.keras.json' % i, 'w') as f:
+            f.write(trace.generate_chrome_trace_format())
+
+    # without training
+    run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+    run_metadata = tf.RunMetadata()
+
+    layer_name = "Without Training"  # storing name of layer for printing layer
+
+    # setting all layers as non-trainable
+    for layer in model.layers:
+        layer.trainable = False
+
+    # compile
+    model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'], options=run_options,
+                  run_metadata=run_metadata)
+
+    # fit on a small number of epochs with callback that records time for each epoch
+    model.fit(x_train, y_train, validation_data=(x_val, y_val), callbacks=[time_callback], verbose=1, epochs=epochs)
+
+    results.append(np.average(time_callback.times))
+    # print average of the time for each layer
+    print(f"{layer_name}: Approx (avg) train time for {epochs} epochs = ", np.average(time_callback.times))
+
+    trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+    with open('timeline-gpu.wot.keras.json', 'w') as f:
+        f.write(trace.generate_chrome_trace_format())
+    return results
+
 
 print("[INFO] breaking into predictors and prediction...")
 
@@ -608,18 +682,25 @@ model.add(Dense(10, input_dim=x.shape[1], kernel_initializer='normal', activatio
 model.add(Dense(1, kernel_initializer='normal'))
 model.add(Dense(y.shape[1],activation='softmax'))
 
+# add options and metadata for profiling
+options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+run_metadata = tf.RunMetadata()
+
 # compile model
 #
-model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'])
+
+model.compile(loss=arguments.loss, optimizer=arguments.optimizer, metrics=['accuracy'], options=options, run_metadata=run_metadata)
 
 # create monitor for callback
 monitor = EarlyStopping(monitor='val_loss', min_delta=1e-3, patience=5, verbose=1, mode='auto')
 
-logdir="logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-tensorboard_callback = TensorBoard(log_dir=logdir, histogram_freq=1, profile_batch = 3)
-
 print("[INFO] fitting model...")
-model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[monitor, tensorboard_callback],verbose=1,epochs=1000)
+model.fit(x_train,y_train,validation_data=(x_val,y_val),callbacks=[monitor],verbose=1,epochs=1000)
+model.summary()
+
+trace = timeline.Timeline(step_stats=run_metadata.step_stats)
+with open('timeline-gpu.keras.json', 'w') as f:
+    f.write(trace.generate_chrome_trace_format())
 
 print("[INFO] measuring accuracy...")
 pred = model.predict(x_test)
@@ -628,5 +709,9 @@ y_eval = np.argmax(y_test,axis=1)
 score = metrics.accuracy_score(y_eval, pred)
 
 print("[INFO] Validation score: {}".format(colored(score, 'yellow')))
+
+# calculate training time of each layer
+get_average_layer_train_time(5, model, x_train, y_train, x_val, y_val)
+
 print("[INFO] Exec Time: {}".format(colored(hms_string(time.time() - start_time), 'yellow')))
 print("[INFO] done.")
